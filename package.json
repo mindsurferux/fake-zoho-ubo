@@ -1,0 +1,23 @@
+{
+  "name": "fake-zoho-v2",
+  "version": "1.0.0",
+  "description": "Fake Zoho Projects API v2 — Hono + Neon Postgres + Vercel",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.js",
+    "seed": "node src/db/seed.js",
+    "seed:fresh": "node src/db/seed.js --fresh",
+    "vercel-build": "echo 'No build step needed'"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.13.0",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
