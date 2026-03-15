@@ -21,6 +21,13 @@
                 <i class="fas fa-circle-notch fa-spin"></i> Verificando...
             </div>
             <span class="portal-id">Portal: <code id="portal-id">—</code></span>
+            <div id="auth-area">
+                <button id="btn-login" class="btn btn-login" onclick="showLoginModal()"><i class="fas fa-sign-in-alt"></i> Login</button>
+                <div id="user-info" class="user-info" style="display:none">
+                    <span id="user-email" class="user-email"></span>
+                    <button class="btn btn-logout" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -89,6 +96,12 @@
             <div class="groups-grid" id="groups-grid"></div>
         </section>
 
+        <!-- Sessions Panel (visible after login) -->
+        <section class="panel sessions-panel" id="sessions-panel" style="display:none">
+            <h2><i class="fas fa-history"></i> Actividad de Sesiones</h2>
+            <div class="sessions-list" id="sessions-list"></div>
+        </section>
+
         <!-- Projects Table -->
         <section class="panel projects-panel">
             <div class="panel-header">
@@ -105,6 +118,9 @@
                         <option value="puesta_en_marcha">Puesta en Marcha</option>
                         <option value="completado">Completado</option>
                     </select>
+                    <button id="btn-add-project" class="btn btn-add" style="display:none" onclick="openProjectModal()">
+                        <i class="fas fa-plus"></i> Agregar Proyecto
+                    </button>
                 </div>
             </div>
             <div class="table-wrapper">
@@ -119,6 +135,7 @@
                             <th>Tareas</th>
                             <th>Avance</th>
                             <th>Fechas</th>
+                            <th id="th-actions" class="col-actions" style="display:none">Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="projects-tbody"></tbody>
@@ -126,12 +143,151 @@
             </div>
         </section>
 
-        <!-- API Endpoints Reference -->
+        <!-- API Endpoints Reference (clickable) -->
         <section class="panel endpoints-panel">
-            <h2><i class="fas fa-code"></i> Endpoints API</h2>
+            <h2><i class="fas fa-code"></i> Endpoints API <span class="hint">(click para ver resultado)</span></h2>
             <div class="endpoints-list" id="endpoints-list"></div>
         </section>
     </main>
+
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card modal-sm">
+            <div class="modal-header">
+                <h3><i class="fas fa-lock"></i> Admin Login</h3>
+                <button class="modal-close" onclick="closeLoginModal()">&times;</button>
+            </div>
+            <form id="login-form" onsubmit="doLogin(event)">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" placeholder="usuario@ubo.cl" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Password" required>
+                </div>
+                <div id="login-error" class="form-error" style="display:none"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeLoginModal()">Cancelar</button>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-sign-in-alt"></i> Ingresar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Project Create/Edit Modal -->
+    <div id="project-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card modal-lg">
+            <div class="modal-header">
+                <h3 id="modal-title"><i class="fas fa-project-diagram"></i> Nuevo Proyecto</h3>
+                <button class="modal-close" onclick="closeProjectModal()">&times;</button>
+            </div>
+            <form id="project-form" onsubmit="saveProject(event)">
+                <input type="hidden" id="pf-id-string" value="">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="pf-name">Nombre del Proyecto *</label>
+                        <input type="text" id="pf-name" required placeholder="Nombre descriptivo">
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-project-code">Codigo *</label>
+                        <input type="text" id="pf-project-code" required placeholder="AF-01, AC-02, etc.">
+                    </div>
+                    <div class="form-group form-full">
+                        <label for="pf-description">Descripcion</label>
+                        <textarea id="pf-description" rows="2" placeholder="Breve descripcion del proyecto"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-group-code">Vicerrectoria *</label>
+                        <select id="pf-group-code" required>
+                            <option value="">Seleccionar VR</option>
+                            <option value="VRAF">VRAF - Adm. y Finanzas</option>
+                            <option value="VRAC">VRAC - Academica</option>
+                            <option value="VRV">VRV - Vinculacion</option>
+                            <option value="VREC">VREC - Rectoria</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-area">Area Solicitante</label>
+                        <input type="text" id="pf-area" placeholder="Departamento o area">
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-start-date">Fecha Inicio</label>
+                        <input type="date" id="pf-start-date">
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-end-date">Fecha Termino</label>
+                        <input type="date" id="pf-end-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Planificado</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="pf-planificado">
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label" id="pf-planificado-label">No</span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-hitos">Hitos completados: <strong id="pf-hitos-value">0</strong>/7</label>
+                        <input type="range" id="pf-hitos" min="0" max="7" value="0" oninput="onHitosChange(this.value)">
+                        <div class="hitos-preview" id="pf-hitos-preview"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Estado computado</label>
+                        <div id="pf-status-preview" class="status-preview">
+                            <span class="badge badge-sin_iniciar">Sin iniciar</span>
+                            <span class="progress-text">0%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-total-tareas">Total Tareas</label>
+                        <input type="number" id="pf-total-tareas" min="1" max="100" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="pf-tareas-completadas">Tareas Completadas</label>
+                        <input type="number" id="pf-tareas-completadas" min="0" max="100" value="0">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeProjectModal()">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="pf-submit-btn"><i class="fas fa-save"></i> Crear Proyecto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card modal-sm">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle" style="color:var(--red)"></i> Eliminar Proyecto</h3>
+                <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+            </div>
+            <div class="delete-body">
+                <p>Estas seguro de eliminar el proyecto <strong id="delete-project-name"></strong>?</p>
+                <p class="text-muted">Esta accion eliminara el proyecto, sus 7 hitos y todas sus tareas. No se puede deshacer.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancelar</button>
+                <button class="btn btn-danger" id="btn-confirm-delete" onclick="confirmDelete()"><i class="fas fa-trash"></i> Eliminar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Result Modal -->
+    <div id="api-modal" class="modal-overlay" style="display:none">
+        <div class="modal-card modal-wide">
+            <div class="modal-header">
+                <h3 id="api-modal-title"><i class="fas fa-code"></i> GET /health</h3>
+                <button class="modal-close" onclick="closeApiModal()">&times;</button>
+            </div>
+            <div class="api-meta" id="api-meta"></div>
+            <pre id="api-modal-body" class="api-result"></pre>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast" style="display:none"></div>
 
     <footer class="app-footer">
         <span>Fake Zoho Projects API v2 — Hono + Neon Postgres + Vercel — UBO DTI</span>

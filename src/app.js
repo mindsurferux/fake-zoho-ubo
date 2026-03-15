@@ -17,6 +17,95 @@ const FAKE_REFRESH_TOKEN = 'fake-refresh-token-ubo-2026';
 const FAKE_CLIENT_ID = 'fake-client-id';
 const FAKE_CLIENT_SECRET = 'fake-client-secret';
 
+// Phase names matching seed.js (7 hitos per project)
+const PHASE_NAMES = [
+    'Levantamiento de Requerimientos', 'Diseno de Solucion', 'Desarrollo Core',
+    'Desarrollo Integraciones', 'Testing y QA', 'Puesta en Marcha', 'Cierre y Documentacion'
+];
+
+const TASK_TEMPLATES = [
+    'Reunion de kickoff', 'Definir alcance del proyecto', 'Recopilar requerimientos funcionales',
+    'Recopilar requerimientos no funcionales', 'Analisis de riesgos', 'Diseno de arquitectura',
+    'Diseno de base de datos', 'Diseno de interfaces', 'Prototipado UI/UX',
+    'Desarrollo modulo principal', 'Desarrollo API REST', 'Integracion con sistemas externos',
+    'Configuracion de infraestructura', 'Pruebas unitarias', 'Pruebas de integracion',
+    'Pruebas de aceptacion usuario', 'Correccion de bugs', 'Documentacion tecnica',
+    'Documentacion de usuario', 'Capacitacion equipo', 'Despliegue en staging',
+    'Despliegue en produccion', 'Monitoreo post-despliegue', 'Cierre formal del proyecto'
+];
+
+function statusFromHitos(hitos) {
+    if (hitos === 0) return 'sin_iniciar';
+    if (hitos <= 2) return 'levantamiento';
+    if (hitos <= 4) return 'desarrollo';
+    if (hitos <= 6) return 'puesta_en_marcha';
+    return 'completado';
+}
+
+async function requireAdmin(c) {
+    const token = c.req.header('x-admin-token');
+    if (!token) return null;
+    const sql = getDb();
+    const rows = await sql`SELECT * FROM admin_sessions WHERE token = ${token} AND action = 'login' ORDER BY created_at DESC LIMIT 1`;
+    return rows.length > 0 ? rows[0] : null;
+}
+
+async function createPhasesForProject(sql, projectId, hitos, startDate, endDate, projectCode) {
+    const projStart = new Date(startDate);
+    const projEnd = new Date(endDate);
+    const totalDays = (projEnd - projStart) / 86400000;
+    const phaseLength = Math.floor(totalDays / 7);
+    let counter = Date.now();
+
+    for (let i = 0; i < 7; i++) {
+        const isCompleted = i < hitos;
+        const phaseStart = new Date(projStart.getTime() + i * phaseLength * 86400000);
+        const phaseEnd = new Date(phaseStart.getTime() + phaseLength * 86400000);
+        const phaseStartStr = phaseStart.toISOString().split('T')[0];
+        const phaseEndStr = phaseEnd.toISOString().split('T')[0];
+
+        await sql`
+            INSERT INTO phases (id_string, project_id, name, description, status, start_date, end_date, completed_date, sequence)
+            VALUES (${`FZH-${counter++}`}, ${projectId}, ${PHASE_NAMES[i]}, ${`Fase ${i + 1} del proyecto ${projectCode}`},
+                    ${isCompleted ? 'completed' : 'notcompleted'}, ${phaseStartStr}, ${phaseEndStr},
+                    ${isCompleted ? phaseEndStr : null}, ${i + 1})
+        `;
+    }
+}
+
+async function syncProjectHitos(sql, projectId, hitos) {
+    const phases = await sql`SELECT id, sequence FROM phases WHERE project_id = ${projectId} ORDER BY sequence ASC`;
+    for (const phase of phases) {
+        const isCompleted = phase.sequence <= hitos;
+        await sql`UPDATE phases SET status = ${isCompleted ? 'completed' : 'notcompleted'},
+                  completed_date = ${isCompleted ? new Date().toISOString().split('T')[0] : null},
+                  updated_at = NOW() WHERE id = ${phase.id}`;
+    }
+}
+
+async function syncProjectTasks(sql, projectId, totalTareas, tareasCompletadas, startDate, endDate) {
+    await sql`DELETE FROM tasks WHERE project_id = ${projectId}`;
+    const phases = await sql`SELECT id FROM phases WHERE project_id = ${projectId} ORDER BY sequence ASC`;
+    const shuffled = [...TASK_TEMPLATES].sort(() => Math.random() - 0.5);
+    const priorities = ['None', 'Low', 'Medium', 'High'];
+    let counter = Date.now();
+
+    for (let t = 0; t < totalTareas; t++) {
+        const isCompleted = t < tareasCompletadas;
+        const phaseIdx = Math.min(Math.floor(t / Math.ceil(totalTareas / 7)), 6);
+        const phaseId = phases[phaseIdx]?.id || phases[0]?.id;
+        const statusType = isCompleted ? 'closed' : 'open';
+        const statusName = isCompleted ? 'Closed' : (t < tareasCompletadas + 3 ? 'In Progress' : 'Open');
+
+        await sql`
+            INSERT INTO tasks (id_string, project_id, phase_id, name, status_type, status_name, priority, percent_complete, start_date, end_date)
+            VALUES (${`FZT-${counter++}`}, ${projectId}, ${phaseId}, ${shuffled[t % shuffled.length]},
+                    ${statusType}, ${statusName}, ${priorities[Math.floor(Math.random() * 4)]},
+                    ${isCompleted ? '100' : String(Math.floor(Math.random() * 80))}, ${startDate}, ${endDate})
+        `;
+    }
+}
+
 // In-memory metrics (reset per cold start on Vercel, persistent locally)
 const metrics = {
     totalRequests: 0,
@@ -339,7 +428,63 @@ app.delete(`${apiBase}/webhooks/:whId`, async (c) => {
     }
 });
 
-// ==================== Admin API (Simulate changes + trigger webhooks) ====================
+// ==================== Admin Auth ====================
+
+// POST /admin/login
+app.post('/admin/login', async (c) => {
+    try {
+        const sql = getDb();
+        const body = await c.req.json();
+        const { email, password } = body;
+        const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+        const ua = c.req.header('user-agent') || 'unknown';
+
+        if (email !== 'uboinsight@ubo.cl' || password !== 'uboinsight#2026') {
+            await sql`INSERT INTO admin_sessions (email, action, ip, user_agent) VALUES (${email || 'unknown'}, 'login_failed', ${ip}, ${ua})`;
+            return c.json({ error: 'Credenciales invalidas' }, 401);
+        }
+
+        const token = `fzadmin-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+        await sql`INSERT INTO admin_sessions (email, token, action, ip, user_agent) VALUES (${email}, ${token}, 'login', ${ip}, ${ua})`;
+
+        return c.json({ token, user: { email, name: 'UBO Insight Admin', role: 'super_admin' } });
+    } catch (err) {
+        return c.json({ error: err.message }, 500);
+    }
+});
+
+// POST /admin/logout
+app.post('/admin/logout', async (c) => {
+    try {
+        const session = await requireAdmin(c);
+        if (!session) return c.json({ error: 'No autenticado' }, 401);
+        const sql = getDb();
+        const ip = c.req.header('x-forwarded-for') || 'unknown';
+        const ua = c.req.header('user-agent') || 'unknown';
+        await sql`INSERT INTO admin_sessions (email, action, ip, user_agent) VALUES (${session.email}, 'logout', ${ip}, ${ua})`;
+        return c.json({ success: true });
+    } catch (err) {
+        return c.json({ error: err.message }, 500);
+    }
+});
+
+// GET /admin/me — Verify token
+app.get('/admin/me', async (c) => {
+    const session = await requireAdmin(c);
+    if (!session) return c.json({ error: 'No autenticado' }, 401);
+    return c.json({ user: { email: session.email, name: 'UBO Insight Admin', role: 'super_admin', logged_in_at: session.created_at } });
+});
+
+// GET /admin/sessions — Recent login activity
+app.get('/admin/sessions', async (c) => {
+    const session = await requireAdmin(c);
+    if (!session) return c.json({ error: 'No autenticado' }, 401);
+    const sql = getDb();
+    const sessions = await sql`SELECT id, email, action, ip, user_agent, created_at FROM admin_sessions ORDER BY created_at DESC LIMIT 30`;
+    return c.json({ sessions });
+});
+
+// ==================== Admin CRUD (Simulate changes + trigger webhooks) ====================
 
 /*
  * FAKE-ZOHO: Estos endpoints NO existen en Zoho real.
@@ -348,58 +493,175 @@ app.delete(`${apiBase}/webhooks/:whId`, async (c) => {
  * En produccion, los cambios ocurren directamente en Zoho Projects UI.
  */
 
-// PATCH /admin/projects/:id — Update a project (simulate change)
+// POST /admin/projects — Create a new project
+app.post('/admin/projects', async (c) => {
+    try {
+        const session = await requireAdmin(c);
+        if (!session) return c.json({ error: 'No autenticado' }, 401);
+
+        const sql = getDb();
+        const body = await c.req.json();
+
+        if (!body.name || !body.project_code || !body.group_code) {
+            return c.json({ error: 'name, project_code, group_code son requeridos' }, 400);
+        }
+
+        // Auto-generate id_string
+        const maxId = await sql`SELECT id_string FROM projects ORDER BY id DESC LIMIT 1`;
+        let nextNum = 2017;
+        if (maxId.length > 0) {
+            const match = maxId[0].id_string.match(/FZP-(\d+)/);
+            if (match) nextNum = parseInt(match[1]) + 1;
+        }
+        const idString = `FZP-${nextNum}`;
+
+        // Resolve group
+        const group = await sql`SELECT id FROM project_groups WHERE code = ${body.group_code}`;
+        if (group.length === 0) return c.json({ error: `Grupo ${body.group_code} no encontrado` }, 400);
+
+        const hitos = Math.min(Math.max(parseInt(body.hitos_completados) || 0, 0), 7);
+        const customStatus = statusFromHitos(hitos);
+        const percent = Math.round((hitos / 7) * 100);
+        const totalTareas = parseInt(body.total_tareas) || 10;
+        const tareasCompletadas = Math.min(parseInt(body.tareas_completadas) || 0, totalTareas);
+        const startDate = body.start_date || new Date().toISOString().split('T')[0];
+        const endDate = body.end_date || new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
+
+        const projRows = await sql`
+            INSERT INTO projects (id_string, name, description, project_code, status, custom_status, start_date, end_date,
+                                  project_percent, owner_name, group_id, area_solicitante, planificado)
+            VALUES (${idString}, ${body.name}, ${body.description || ''}, ${body.project_code}, 'active', ${customStatus},
+                    ${startDate}, ${endDate}, ${String(percent)}, 'UBO DTI', ${group[0].id},
+                    ${body.area_solicitante || ''}, ${body.planificado ? 1 : 0})
+            RETURNING id
+        `;
+
+        await createPhasesForProject(sql, projRows[0].id, hitos, startDate, endDate, body.project_code);
+        await syncProjectTasks(sql, projRows[0].id, totalTareas, tareasCompletadas, startDate, endDate);
+
+        await dispatchWebhooks('project.created', { id_string: idString, name: body.name, custom_status: customStatus });
+
+        return c.json({ success: true, id_string: idString, custom_status: customStatus, project_percent: percent }, 201);
+    } catch (err) {
+        return c.json({ error: err.message }, 500);
+    }
+});
+
+// PATCH /admin/projects/:id — Update a project (full edit)
 app.patch('/admin/projects/:id', async (c) => {
     try {
+        const session = await requireAdmin(c);
+        if (!session) return c.json({ error: 'No autenticado' }, 401);
+
         const sql = getDb();
         const idString = c.req.param('id');
         const body = await c.req.json();
 
-        // Check project exists
         const existing = await sql`SELECT * FROM projects WHERE id_string = ${idString}`;
         if (existing.length === 0) {
             return c.json({ error: { message: 'Project not found', code: 'NOT_FOUND' } }, 404);
         }
+        const project = existing[0];
 
-        // Allowed fields to update
-        const allowedFields = ['name', 'custom_status', 'project_percent', 'status', 'start_date', 'end_date'];
-        const updates = {};
-        for (const field of allowedFields) {
-            if (body[field] !== undefined) updates[field] = body[field];
-        }
-
-        if (Object.keys(updates).length === 0) {
-            return c.json({ error: { message: 'No valid fields to update', code: 'INVALID_REQUEST' } }, 400);
-        }
-
-        // Build dynamic update
+        // Build update fields
+        const allowedFields = ['name', 'description', 'project_code', 'area_solicitante', 'start_date', 'end_date', 'status', 'owner_name'];
         let setClauses = [];
         let values = [];
         let idx = 1;
-        for (const [key, val] of Object.entries(updates)) {
-            setClauses.push(`${key} = $${idx}`);
-            values.push(val);
+
+        for (const field of allowedFields) {
+            if (body[field] !== undefined) {
+                setClauses.push(`${field} = $${idx}`);
+                values.push(body[field]);
+                idx++;
+            }
+        }
+
+        // Handle planificado (boolean → integer)
+        if (body.planificado !== undefined) {
+            setClauses.push(`planificado = $${idx}`);
+            values.push(body.planificado ? 1 : 0);
             idx++;
         }
-        setClauses.push(`updated_at = NOW()`);
-        values.push(idString);
 
-        const updateQuery = `UPDATE projects SET ${setClauses.join(', ')} WHERE id_string = $${idx} RETURNING *`;
-        const updated = await sql(updateQuery, values);
+        // Handle group_code → group_id
+        if (body.group_code) {
+            const grp = await sql`SELECT id FROM project_groups WHERE code = ${body.group_code}`;
+            if (grp.length > 0) {
+                setClauses.push(`group_id = $${idx}`);
+                values.push(grp[0].id);
+                idx++;
+            }
+        }
 
-        // Dispatch webhooks
-        await dispatchWebhooks('project.updated', {
-            id_string: idString,
-            name: updated[0].name,
-            status: updated[0].status,
-            custom_status: updated[0].custom_status,
-            project_percent: updated[0].project_percent,
-            changes: updates
-        });
+        // Handle hitos_completados → update phases + recompute status/percent
+        const hitos = body.hitos_completados !== undefined ? Math.min(Math.max(parseInt(body.hitos_completados), 0), 7) : null;
+        if (hitos !== null) {
+            const customStatus = statusFromHitos(hitos);
+            const percent = Math.round((hitos / 7) * 100);
+            setClauses.push(`custom_status = $${idx}`);
+            values.push(customStatus);
+            idx++;
+            setClauses.push(`project_percent = $${idx}`);
+            values.push(String(percent));
+            idx++;
 
-        return c.json({ success: true, project: updated[0], webhooks_dispatched: true });
+            await syncProjectHitos(sql, project.id, hitos);
+        }
+
+        // Handle tareas
+        const totalTareas = body.total_tareas !== undefined ? parseInt(body.total_tareas) : null;
+        const tareasCompletadas = body.tareas_completadas !== undefined ? parseInt(body.tareas_completadas) : null;
+        if (totalTareas !== null || tareasCompletadas !== null) {
+            const tt = totalTareas || parseInt((await sql`SELECT COUNT(*) as c FROM tasks WHERE project_id = ${project.id}`)[0].c);
+            const tc = tareasCompletadas !== null ? Math.min(tareasCompletadas, tt) : parseInt((await sql`SELECT COUNT(*) as c FROM tasks WHERE project_id = ${project.id} AND status_type = 'closed'`)[0].c);
+            const sd = body.start_date || project.start_date;
+            const ed = body.end_date || project.end_date;
+            await syncProjectTasks(sql, project.id, tt, tc, sd, ed);
+        }
+
+        if (setClauses.length === 0 && hitos === null && totalTareas === null && tareasCompletadas === null) {
+            return c.json({ error: 'No hay campos validos para actualizar' }, 400);
+        }
+
+        if (setClauses.length > 0) {
+            setClauses.push(`updated_at = NOW()`);
+            values.push(idString);
+            const updateQuery = `UPDATE projects SET ${setClauses.join(', ')} WHERE id_string = $${idx} RETURNING *`;
+            await sql(updateQuery, values);
+        }
+
+        // Dispatch webhook
+        await dispatchWebhooks('project.updated', { id_string: idString, name: body.name || project.name, changes: Object.keys(body) });
+
+        return c.json({ success: true, id_string: idString, webhooks_dispatched: true });
     } catch (err) {
-        return c.json({ error: { message: err.message, code: 'INTERNAL_ERROR' } }, 500);
+        return c.json({ error: err.message }, 500);
+    }
+});
+
+// DELETE /admin/projects/:id — Delete a project (cascades phases + tasks)
+app.delete('/admin/projects/:id', async (c) => {
+    try {
+        const session = await requireAdmin(c);
+        if (!session) return c.json({ error: 'No autenticado' }, 401);
+
+        const sql = getDb();
+        const idString = c.req.param('id');
+
+        const existing = await sql`SELECT id, name FROM projects WHERE id_string = ${idString}`;
+        if (existing.length === 0) {
+            return c.json({ error: { message: 'Project not found', code: 'NOT_FOUND' } }, 404);
+        }
+
+        // CASCADE handles phases + tasks deletion via FK
+        await sql`DELETE FROM projects WHERE id_string = ${idString}`;
+
+        await dispatchWebhooks('project.deleted', { id_string: idString, name: existing[0].name });
+
+        return c.json({ success: true, deleted: idString });
+    } catch (err) {
+        return c.json({ error: err.message }, 500);
     }
 });
 

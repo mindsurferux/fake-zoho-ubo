@@ -117,6 +117,18 @@ export async function initSchema() {
         )
     `;
 
+    await sql`
+        CREATE TABLE IF NOT EXISTS admin_sessions (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL,
+            token TEXT,
+            action TEXT NOT NULL DEFAULT 'login',
+            ip TEXT,
+            user_agent TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `;
+
     // Indexes
     await sql`CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_tasks_phase ON tasks(phase_id)`;
