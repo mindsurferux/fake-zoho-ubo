@@ -7,7 +7,7 @@
     "dev": "node src/server.js",
     "seed": "node src/db/seed.js",
     "seed:fresh": "node src/db/seed.js --fresh",
-    "vercel-build": "echo 'No build step needed'"
+    "vercel-build": "node build.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "@hono/node-server": "^1.13.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "esbuild": "^0.27.4"
   },
   "engines": {
     "node": ">=18"
