@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getDb, checkDbHealth } from './db/connection.js';
 import { formatProject, formatPhase, formatTask, formatGroup } from './services/zoho-formatter.js';
+import { getDashboardHTML } from './dashboard-content.js';
 
 const app = new Hono();
 const PORTAL_ID = process.env.PORTAL_ID || '8060001';
@@ -657,5 +658,11 @@ function formatUptime(seconds) {
     parts.push(`${s}s`);
     return parts.join(' ');
 }
+
+// ==================== Dashboard (served via Edge function) ====================
+
+app.get('/', (c) => {
+    return c.html(getDashboardHTML());
+});
 
 export default app;
